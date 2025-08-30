@@ -1,0 +1,147 @@
+import numpy as np
+import pygame
+import math
+
+# -------------------------------
+# Parámetros físicos
+# -------------------------------
+M = 0.5      # masa carro (kg)
+m = 0.2      # masa péndulo (kg)
+b = 0.1      # fricción carro (N·s/m)
+l = 0.5      # distancia CG (m)
+I = 0.006    # inercia péndulo
+b_p = 0.01   # fricción pivote
+g = 9.81
+dt = 0.01
+
+# -------------------------------
+# Controladores (PID en cascada)
+# -------------------------------
+Kp_theta = 150.0
+Ki_theta = 0.0
+Kd_theta = 25.0
+
+Kp_pos = 2.0
+Kd_pos = 1.2
+
+# -------------------------------
+# Límites
+# -------------------------------
+force_limit = 25.0                  # Limite fuerza motor
+theta_ref_limit = math.radians(18)  # limite del angulo
+x_limit = 3                         # limite de desplazamiento del carro
+
+# -------------------------------
+# Estado inicial
+# -------------------------------
+def initial_state():
+    # estado: [x, x_dot, theta, theta_dot]
+    return np.array([0.0, 0.0, math.radians(8.0), 0.0], dtype=float)
+
+state = initial_state()
+integral_theta = 0.0
+
+# -------------------------------
+# Dinámica no lineal
+# -------------------------------
+def f_nonlinear(y, F):
+    x, x_dot, th, th_dot = y
+    st, ct = math.sin(th), math.cos(th)
+
+    Den = (I + m * l**2) * (M + m) - (m * l * ct)**2
+    if abs(Den) < 1e-9:
+        Den = 1e-9
+
+    Fx = F - b * x_dot - m * l * th_dot**2 * st
+    T = m * g * l * st + b_p * th_dot
+
+    th_dd = ((m * l * ct) * Fx - (M + m) * T) / Den
+    x_dd  = ((I + m * l**2) * Fx + (m * l * ct) * T) / Den
+
+    return np.array([x_dot, x_dd, th_dot, th_dd], dtype=float)
+
+# -------------------------------
+# Integrador RK4
+# -------------------------------
+def rk4_step(y, F, dt):
+    k1 = f_nonlinear(y, F)
+    k2 = f_nonlinear(y + 0.5*dt*k1, F)
+    k3 = f_nonlinear(y + 0.5*dt*k2, F)
+    k4 = f_nonlinear(y + dt*k3, F)
+    return y + dt*(k1 + 2*k2 + 2*k3 + k4)/6.0
+
+# -------------------------------
+# Interfaz Pygame
+# -------------------------------
+pygame.init()
+WIDTH, HEIGHT = 1100, 600
+screen = pygame.display.set_mode((WIDTH, HEIGHT))
+pygame.display.set_caption("Pén Invertido PARTE DIFUSA")
+font = pygame.font.SysFont("Arial", 18)
+clock = pygame.time.Clock()
+
+# escalas de dibujo
+scale = 200  # pixeles por metro
+cart_y_px = HEIGHT // 2
+
+# -------------------------------
+# Simulación (inicia automáticamente)
+# -------------------------------
+running = True
+simulating = True   # <--- arranca de inmediato
+
+while running:
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+            running = False
+
+    screen.fill((255, 255, 255))
+
+    if simulating:
+        # estado actual
+        x, x_dot, theta, theta_dot = state
+
+        # --- Lazo externo: posición -> referencia angular ---
+        pos_err = 0.0 - x
+        theta_ref = Kp_pos * pos_err - Kd_pos * x_dot
+        theta_ref = max(-theta_ref_limit, min(theta_ref_limit, theta_ref))
+
+        # --- Lazo interno: PD sobre theta ---
+        err_theta = theta_ref - theta
+        derivative_theta = -theta_dot
+        if Ki_theta != 0:
+            integral_theta += err_theta * dt
+
+        F_unsat = Kp_theta * err_theta + Ki_theta * integral_theta + Kd_theta * derivative_theta
+        F = max(-force_limit, min(force_limit, F_unsat))
+
+        if Ki_theta != 0 and abs(F_unsat) > force_limit:
+            integral_theta -= err_theta * dt
+
+        # protección de límites espaciales
+        if state[0] <= -x_limit and F < 0: F = 0.0
+        if state[0] >=  x_limit and F > 0: F = 0.0
+
+        # integrar
+        state = rk4_step(state, F, dt)
+
+        # dibujar carro
+        cart_x_px = int(WIDTH//2 + state[0]*scale)
+        cart_y = cart_y_px
+        pygame.draw.rect(screen, (0,0,0), (cart_x_px-40, cart_y-20, 80, 40), 2)
+
+        # dibujar péndulo
+        pend_x = cart_x_px + int(l * scale * math.sin(state[2]))
+        pend_y = cart_y - int(l * scale * math.cos(state[2]))
+        pygame.draw.line(screen, (200,0,0), (cart_x_px, cart_y), (pend_x, pend_y), 5)
+        pygame.draw.circle(screen, (0,0,200), (pend_x, pend_y), 10)
+
+        # mostrar valores
+        screen.blit(font.render(f"x={state[0]:.3f} m", True, (0,0,0)), (30,80))
+        screen.blit(font.render(f"theta={math.degrees(state[2]):.2f} deg", True, (0,0,0)), (30,100))
+        screen.blit(font.render(f"F={F:.2f} N", True, (0,0,0)), (30,120))
+
+    pygame.display.flip()
+    clock.tick(int(1.0/dt))
+
+pygame.quit()
