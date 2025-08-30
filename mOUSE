@@ -1,0 +1,129 @@
+import numpy as np
+import pygame
+
+# ======================================================
+#   MODELO DEL PÉNDULO INVERTIDO (carro + fricción)
+# ======================================================
+def modelo_pendulo(state, F, params, dt):
+    """
+    Calcula la evolución del sistema carro-péndulo invertido
+    usando integración de Euler.
+    
+    state = [x, dx, theta, dtheta]
+    F = fuerza aplicada al carro
+    params = diccionario con parámetros físicos
+    dt = paso de integración
+    """
+    x, dx, theta, dtheta = state
+    M, m, L, g, b, mu = params["M"], params["m"], params["L"], params["g"], params["b"], params["mu"]
+
+    sin_t, cos_t = np.sin(theta), np.cos(theta)
+    denom = M + m - m * cos_t**2
+
+    # Ecuaciones del sistema (con fricción)
+    ddx = (F - b * dx + m * sin_t * (L * dtheta**2 + g * cos_t - mu * dtheta * cos_t / (m * L))) / denom
+    ddtheta = (-F * cos_t + b * dx * cos_t - (M + m) * g * sin_t - mu * dtheta * (M + m) / (m * L)) / (L * denom)
+
+    # Integración numérica (Euler explícito)
+    x += dx * dt
+    dx += ddx * dt
+    theta += dtheta * dt
+    dtheta += ddtheta * dt
+
+    return np.array([x, dx, theta, dtheta])
+
+# ======================================================
+#   CONFIGURACIÓN DEL SISTEMA
+# ======================================================
+params = {
+    "M": 0.8,   # masa del carro [kg]
+    "m": 0.4,   # masa del péndulo [kg]
+    "L": 0.4,   # longitud del péndulo [m]
+    "g": 9.81,  # gravedad [m/s²]
+    "b": 0.05,  # fricción carro
+    "mu": 0.03  # fricción péndulo
+}
+
+# Estado inicial
+state = np.array([0.0, 0.0, np.pi, 0.0])  # x, dx, θ, dθ
+dt = 0.02
+k_mouse = 3.5   # constante que convierte la distancia del mouse a fuerza
+
+# ======================================================
+#   CONFIGURACIÓN DE PYGAME
+# ======================================================
+pygame.init()
+WIDTH, HEIGHT = 1200, 700
+screen = pygame.display.set_mode((WIDTH, HEIGHT))
+pygame.display.set_caption("Simulación Péndulo Invertido con Mouse")
+clock = pygame.time.Clock()
+
+font = pygame.font.SysFont("Arial", 20)
+running = True
+escala_pixeles = 200  # 1 m = 200 px
+
+# ======================================================
+#   BUCLE PRINCIPAL
+# ======================================================
+while running:
+    screen.fill((255, 255, 255))  # fondo blanco
+
+    # ---------------------------
+    # Control con el mouse
+    # ---------------------------
+    mouse_x, _ = pygame.mouse.get_pos()
+    x_pix = int(WIDTH // 2 + state[0] * escala_pixeles)
+    distancia_pix = mouse_x - x_pix
+    F = k_mouse * distancia_pix / escala_pixeles  # aprox en Newtons
+
+    # ---------------------------
+    # Simulación dinámica
+    # ---------------------------
+    state = modelo_pendulo(state, F, params, dt)
+
+    # ---------------------------
+    # Dibujar carro y péndulo
+    # ---------------------------
+    x_pix = int(WIDTH // 2 + state[0] * escala_pixeles)
+    cart_y = HEIGHT // 2
+    pend_x = int(x_pix + params["L"] * escala_pixeles * np.sin(state[2]))
+    pend_y = int(cart_y + params["L"] * escala_pixeles * np.cos(state[2]))
+
+    # Carro
+    pygame.draw.rect(screen, (0, 0, 0), (x_pix - 25, cart_y - 10, 50, 20))
+    # Péndulo
+    pygame.draw.line(screen, (200, 0, 0), (x_pix, cart_y), (pend_x, pend_y), 5)
+    # Punto de unión
+    pygame.draw.circle(screen, (0, 0, 200), (x_pix, cart_y), 5)
+    # Masa del péndulo (tamaño proporcional a m^(1/3))
+    radio = int(10 * (params["m"])**(1/3))
+    pygame.draw.circle(screen, (0, 150, 0), (pend_x, pend_y), radio)
+
+    # ---------------------------
+    # Mostrar variables físicas
+    # ---------------------------
+    labels = [
+        f"x = {state[0]:.2f} m",
+        f"dx = {state[1]:.2f} m/s",
+        f"θ = {np.degrees(state[2]) % 360:.2f}°",
+        f"dθ = {np.degrees(state[3]):.2f} °/s",
+        f"F = {F:.2f} N"
+    ]
+    for i, label in enumerate(labels):
+        text = font.render(label, True, (0, 0, 0))
+        screen.blit(text, (10, 10 + i * 25))
+
+    # ---------------------------
+    # Actualizar pantalla
+    # ---------------------------
+    pygame.display.flip()
+    clock.tick(50)
+
+    # ---------------------------
+    # Eventos de Pygame
+    # ---------------------------
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+            running = False
+
+pygame.quit()
